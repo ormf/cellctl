@@ -84,6 +84,7 @@
 (defclass value-cell ()
   ((val :accessor val :initarg :val :initform 0)
    (ref :accessor ref :initarg :ref :initform nil)
+   (ref-set-fn :accessor ref-set-fn :initarg :ref-set-fn :initform #'identity)
    (map-fn :initarg :map-fn :initform #'identity :accessor map-fn)
    (rmap-fn :initarg :rmap-fn :initform #'identity :accessor rmap-fn)))
 
@@ -100,13 +101,14 @@
   (:documentation "set the val of instance from its reference by
   invoking the rmap-fn on the val of the reference.")
   (:method ((instance value-cell) new-val)
-    (with-slots (val rmap-fn) instance
-      (setf val (funcall rmap-fn new-val)))))
+    (with-slots (val ref-set-fn rmap-fn) instance
+      (setf val (funcall rmap-fn new-val))
+      (funcall ref-set-fn val))))
 
 (defmethod (setf val) (new-val (instance value-cell))
   (setf (slot-value instance 'val) new-val)
-  (format t "directly setting value-cell~%")
-  (set-cell (ref instance) (funcall (map-fn instance) new-val) :src instance)
+;;;  (format t "directly setting value-cell~%")
+  (if (ref instance) (set-cell (ref instance) (funcall (map-fn instance) new-val) :src instance))
   new-val)
 
 (defmethod print-object ((obj value-cell) out)
@@ -130,7 +132,6 @@
                   (funcall rmap-fn (slot-value new-ref 'val))))))
     new-ref))
 
-
 (defun model-val-expand (slots)
   (loop for slot in slots
         collect `(,slot (val ,slot))))
@@ -140,6 +141,38 @@
   `(with-slots ,slots ,instance
      (let ,(model-val-expand slots)
        ,@body)))
+
+(defmacro model-slot-register-setf-method (slot-reader class-name)
+  `(progn
+     (warn "~&redefining setf for (~a ~a)" ',slot-reader ',class-name)
+     (defgeneric (setf ,slot-reader) (val ,class-name)
+       (:method (val (instance boid-params))
+         (set-cell (,slot-reader instance) val)))))
+
+(defun class-get-model-slot-readers (class-name)
+  (let ((tmp (make-instance class-name))
+         (class (find-class class-name)))
+     (c2mop:ensure-finalized class)
+     (loop for slot-def in (c2mop:class-direct-slots class)
+           for slot-name = (c2mop:slot-definition-name slot-def)
+           if (typep (slot-value tmp slot-name) 'model-slot)
+             collect (first (c2mop:slot-definition-readers slot-def)))))
+
+(defun class-get-model-slot-reader-defs (class-name)
+  (loop for reader in (class-get-model-slot-readers class-name)
+        collect `(model-slot-register-setf-method ,reader ,class-name)))
+
+;;; (class-get-model-slot-reader-defs 'boid-params)
+
+(defmacro class-redefine-model-slots-setf (class-name)
+  `(progn
+     ,@(class-get-model-slot-reader-defs class-name)))
+
+
+
+
+
+;;; (class-redefine-model-slots-setf boid-params)
 
 #|
 (with-model-slots (maxspeed maxlife) *bp*
