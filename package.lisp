@@ -6,11 +6,12 @@
    #:model-slot
    #:model-array
    #:set-cell
+   #:set-cell-hook
    #:ref-set-cell
    #:value-cell
    #:map-fn
    #:rmap-fn
-   #:ref-set-fn
+   #:ref-set-hook
    #:val
    #:set-ref
    #:dependents
@@ -21,4 +22,4 @@
    #:class-redefine-model-slots-setf
    #:model-slot-register-setf-method
    #:class-get-model-slot-readers
-   #:class-get-model-slot-reader-defs))
+   #:class-redefine-model-slot-accessors))

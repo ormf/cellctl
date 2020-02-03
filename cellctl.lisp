@@ -30,17 +30,33 @@
 
 (defclass model-slot ()
   ((val :initform 0 :initarg :val :accessor val)
+   (set-cell-hook :initform #'identity :initarg :set-cell-hook :accessor set-cell-hook)
    (dependents :initform nil :accessor dependents)))
 
 (defmethod (setf val) (val (instance model-slot))
+  (funcall (set-cell-hook instance) val)
   (setf (slot-value instance 'val) val)
   (map nil #'(lambda (cell) (ref-set-cell cell val))
-       (dependents instance))
-  val)
+       (dependents instance)))
 
 (defmethod print-object ((obj model-slot) out)
   (print-unreadable-object (obj out :type t)
     (format out "~s" (val obj))))
+
+(defgeneric set-cell (instance value &key src)
+  (:method ((instance model-slot) value &key src)
+;;    (format t "set-cell ~a ~a ~a" instance value src)
+    (let ((old (slot-value instance 'val)))
+      (unless (eql old value)
+        (funcall (set-cell-hook instance) value)
+        (prog1
+            (setf (slot-value instance 'val) value)
+          (map nil #'(lambda (cell)
+                       (unless (eql cell src) (ref-set-cell cell value)))
+               (dependents instance))))))
+  (:documentation "set the val slot of the model-slot and its
+  dependents. If triggered from a dependent, its instance can be given
+  to the src keyword to avoid reassignment or loops."))
 
 (defclass model-array (model-slot)
   ((a-ref :initform nil :initarg :a-ref :accessor a-ref)
@@ -55,12 +71,15 @@
   val)
 
 (defmethod set-cell ((instance model-array) value &key src)
-  (prog1
-      (setf (slot-value instance 'val) value)
-  (with-slots (arr a-ref dependents) instance
-    (setf (apply #'aref arr a-ref) value)
-    (map nil #'(lambda (cell) (unless (eql cell src) (ref-set-cell cell value)))
-         (dependents instance)))))
+  (let ((old (slot-value instance 'val)))
+    (unless (eql old value)
+      (prog1
+          (setf (slot-value instance 'val) value)
+        (with-slots (arr a-ref dependents) instance
+          (setf (apply #'aref arr a-ref) value)
+          (map nil #'(lambda (cell) (unless (eql cell src)
+                                 (ref-set-cell cell value)))
+               (dependents instance)))))))
 
 (defmethod print-object ((obj model-array) out)
   (print-unreadable-object (obj out :type nil)
@@ -70,21 +89,11 @@
 
 ;;; (setf (val *test-model*) 10)
 
-(defgeneric set-cell (instance value &key src)
-  (:method ((instance model-slot) value &key src)
-;;    (break "set-cell ~a ~a ~a" instance value src)
-    (prog1
-        (setf (slot-value instance 'val) value)
-      (map nil #'(lambda (cell) (unless (eql cell src) (ref-set-cell cell value)))
-           (dependents instance))))
-  (:documentation "set the val slot of the model-slot and its
-  dependents. If triggered from a dependent, its instance can be given
-  to the src keyword to avoid reassignment or loops."))
 
 (defclass value-cell ()
   ((val :accessor val :initarg :val :initform 0)
    (ref :accessor ref :initarg :ref :initform nil)
-   (ref-set-fn :accessor ref-set-fn :initarg :ref-set-fn :initform #'identity)
+   (ref-set-hook :accessor ref-set-hook :initarg :ref-set-hook :initform #'identity)
    (map-fn :initarg :map-fn :initform #'identity :accessor map-fn)
    (rmap-fn :initarg :rmap-fn :initform #'identity :accessor rmap-fn)))
 
@@ -101,15 +110,21 @@
   (:documentation "set the val of instance from its reference by
   invoking the rmap-fn on the val of the reference.")
   (:method ((instance value-cell) new-val)
-    (with-slots (val ref-set-fn rmap-fn) instance
-      (setf val (funcall rmap-fn new-val))
-      (funcall ref-set-fn val))))
+    (with-slots (val ref-set-hook rmap-fn) instance
+      (if rmap-fn (setf val (funcall rmap-fn new-val)))
+      (if ref-set-hook (funcall ref-set-hook val)))))
 
 (defmethod (setf val) (new-val (instance value-cell))
-  (setf (slot-value instance 'val) new-val)
+  (let ((old (slot-value instance 'val)))
+    (unless (eql old new-val)
+      (setf (slot-value instance 'val) new-val)
+      (if (ref-set-hook instance) (funcall (ref-set-hook instance) new-val))
 ;;;  (format t "directly setting value-cell~%")
-  (if (ref instance) (set-cell (ref instance) (funcall (map-fn instance) new-val) :src instance))
-  new-val)
+      (if (and (ref instance) (map-fn instance))
+          (set-cell (ref instance)
+                    (funcall (map-fn instance) new-val) :src instance))
+      new-val)))
+
 
 (defmethod print-object ((obj value-cell) out)
   (print-unreadable-object (obj out :type t)
@@ -120,16 +135,22 @@
   add to the model-cell's dependents list. Also remove instance in
   dependents of previous ref.")
   (:method ((instance value-cell) new-ref &key map-fn rmap-fn)
+;;    (break "set-ref")
     (with-slots (ref) instance
-      (when ref (setf (dependents ref) (delete instance (dependents ref))))
+      (when (and ref (dependents ref))
+        (setf (dependents ref) (delete instance (dependents ref))))
       (setf ref new-ref)
       (if new-ref
           (progn
             (pushnew instance (dependents new-ref))
             (if map-fn (setf (map-fn instance) map-fn))
-            (if rmap-fn (setf (rmap-fn instance) rmap-fn))
-            (setf (slot-value instance 'val)
-                  (funcall rmap-fn (slot-value new-ref 'val))))))
+            (if rmap-fn
+                (progn
+                  (setf (rmap-fn instance) rmap-fn)))
+            (let ((new-val (funcall (rmap-fn instance) (slot-value new-ref 'val))))
+              (setf (slot-value instance 'val) new-val)
+              (if (ref-set-hook instance)
+                  (funcall (ref-set-hook instance) new-val))))))
     new-ref))
 
 (defun model-val-expand (slots)
@@ -147,15 +168,17 @@
      (warn "~&redefining setf for (~a ~a)" ',slot-reader ',class-name)
      (defgeneric (setf ,slot-reader) (val ,class-name)
        (:method (val (instance boid-params))
-         (set-cell (,slot-reader instance) val)))))
+         (let ((old (slot-value instance 'val)))
+           (unless (eql old val)
+             (set-cell (,slot-reader instance) val)))))))
 
 (defun class-get-model-slot-readers (class-name)
-  (let ((tmp (make-instance class-name))
+  (let (;;(tmp (make-instance class-name))
          (class (find-class class-name)))
      (c2mop:ensure-finalized class)
      (loop for slot-def in (c2mop:class-direct-slots class)
            for slot-name = (c2mop:slot-definition-name slot-def)
-           if (typep (slot-value tmp slot-name) 'model-slot)
+           ;; if (typep (slot-value tmp slot-name) 'model-slot)
              collect (first (c2mop:slot-definition-readers slot-def)))))
 
 (defun class-get-model-slot-reader-defs (class-name)
@@ -168,13 +191,34 @@
   `(progn
      ,@(class-get-model-slot-reader-defs class-name)))
 
-
-
-
+(defmacro class-redefine-model-slot-accessors (class-name)
+  `(progn
+     (in-package :cellctl-test)
+     ,@(class-get-model-slot-reader-defs class-name)))
 
 ;;; (class-redefine-model-slots-setf boid-params)
 
 #|
+
+(defclass test ()
+  ((m1 :type model-slot :initform (make-instance 'model-slot) :initarg :m1 :accessor m1-cell :reader m1)))
+
+(defgeneric m1 (instance)
+  (:method ((instance test))
+    (val (m1-cell instance))))
+
+(defgeneric (setf m1) (value instance)
+  (:method (value (instance test))
+    (setf (val (m1-cell instance)) value)))
+
+
+(defparameter *t1* (make-instance 'test))
+
+(m1 *t1*)
+(dependents (m1-cell *t1*))
+(setf (m1 *t1*) 10)
+
+
 (with-model-slots (maxspeed maxlife) *bp*
   (setf maxspeed 10))
 
