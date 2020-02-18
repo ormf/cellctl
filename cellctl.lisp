@@ -45,12 +45,13 @@
 
 (defgeneric set-cell (instance value &key src)
   (:method ((instance model-slot) value &key src)
-;;    (format t "set-cell ~a ~a ~a" instance value src)
+;;;    (format t "~&set-cell ~a ~a ~a ~a~%" instance value src (slot-value instance 'val))
     (let ((old (slot-value instance 'val)))
       (unless (eql old value)
         (funcall (set-cell-hook instance) value)
         (prog1
             (setf (slot-value instance 'val) value)
+;;;          (format t "~&mapping...~%")          
           (map nil #'(lambda (cell)
                        (unless (eql cell src) (ref-set-cell cell value)))
                (dependents instance))))))
@@ -135,7 +136,7 @@
   add to the model-cell's dependents list. Also remove instance in
   dependents of previous ref.")
   (:method ((instance value-cell) new-ref &key map-fn rmap-fn)
-;;    (break "set-ref")
+;;;    (break "set-ref")
     (with-slots (ref) instance
       (when (and ref (dependents ref))
         (setf (dependents ref) (delete instance (dependents ref))))
