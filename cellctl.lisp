@@ -26,37 +26,40 @@
 ;;; and dependent value-cells. To set a value in a model-slot, use
 ;;; set-cell.
 
-
+(defun src-identity (thing &key src)
+  (declare (ignore src))
+  thing)
 
 (defclass model-slot ()
   ((val :initform 0 :initarg :val :accessor val)
-   (set-cell-hook :initform #'identity :initarg :set-cell-hook :accessor set-cell-hook)
+   (set-cell-hook :initform #'src-identity :initarg :set-cell-hook :accessor set-cell-hook)
    (dependents :initform nil :accessor dependents)))
 
 (defmethod (setf val) (val (instance model-slot))
   (funcall (set-cell-hook instance) val)
   (setf (slot-value instance 'val) val)
   (map nil #'(lambda (cell) (ref-set-cell cell val))
-       (dependents instance)))
+       (dependents instance))
+  val)
 
 (defmethod print-object ((obj model-slot) out)
   (print-unreadable-object (obj out :type t)
-    (format out "~s" (val obj))))
+    (format out "m ~s" (val obj))))
 
 (defgeneric set-cell (instance value &key src)
   (:method ((instance model-slot) value &key src)
 ;;;    (format t "~&set-cell ~a ~a ~a ~a~%" instance value src (slot-value instance 'val))
     (let ((old (slot-value instance 'val)))
       (unless (eql old value)
-        (funcall (set-cell-hook instance) value)
+        (funcall (set-cell-hook instance) value :src src)
         (prog1
             (setf (slot-value instance 'val) value)
 ;;;          (format t "~&mapping...~%")          
-          (map nil #'(lambda (cell)
-                       (unless (eql cell src) (ref-set-cell cell value)))
-               (dependents instance))))))
+          (dolist (cell (dependents instance))
+            (unless (eql cell src) (ref-set-cell cell value)))))
+      value))
   (:documentation "set the val slot of the model-slot and its
-  dependents. If triggered from a dependent, its instance can be given
+  dependents. If triggered from a dependant, its instance can be given
   to the src keyword to avoid reassignment or loops."))
 
 (defclass model-array (model-slot)
@@ -84,7 +87,7 @@
 
 (defmethod print-object ((obj model-array) out)
   (print-unreadable-object (obj out :type nil)
-    (format out "~s" (val obj))))
+    (format out "a ~s" (val obj))))
 
 ;;; (defparameter *test-model* (make-instance 'model-array))
 
@@ -94,7 +97,7 @@
 (defclass value-cell ()
   ((val :accessor val :initarg :val :initform 0)
    (ref :accessor ref :initarg :ref :initform nil)
-   (ref-set-hook :accessor ref-set-hook :initarg :ref-set-hook :initform #'identity)
+   (ref-set-hook :accessor ref-set-hook :initarg :ref-set-hook :initform #'src-identity)
    (map-fn :initarg :map-fn :initform #'identity :accessor map-fn)
    (rmap-fn :initarg :rmap-fn :initform #'identity :accessor rmap-fn)))
 
@@ -126,10 +129,9 @@
                     (funcall (map-fn instance) new-val) :src instance))
       new-val)))
 
-
 (defmethod print-object ((obj value-cell) out)
-  (print-unreadable-object (obj out :type t)
-    (format out "~s" (val obj))))
+  (print-unreadable-object (obj out :type nil)
+    (format out "v ~s" (val obj))))
 
 (defgeneric set-ref (instance new-ref &key map-fn rmap-fn)
   (:documentation "(Re)set the reference model-cell of value cell and
@@ -153,6 +155,16 @@
               (if (ref-set-hook instance)
                   (funcall (ref-set-hook instance) new-val))))))
     new-ref))
+
+(defgeneric remove-ref (instance)
+  (:documentation "Remove the reference of value cell from the model-cell's dependents
+  list.")
+  (:method ((instance value-cell))
+;;;    (break "set-ref")
+    (with-slots (ref) instance
+      (when (and ref (dependents ref))
+        (setf (dependents ref) (delete instance (dependents ref)))))
+    nil))
 
 (defun model-val-expand (slots)
   (loop for slot in slots
@@ -228,6 +240,22 @@
 (defparameter *v1* (make-instance 'value-cell :ref *model01*))
 
 (defparameter *v2* (make-instance 'value-cell :ref *model01*))
+
+(setf (set-cell-hook *model01*) (lambda (val) (format t "set cell of model01 to ~a~%" val)))
+
+(val *v1*)
+
+(set-cell *model01* 10)
+
+(setf (val *model01*) 20)
+
+(setf (val *v1*) 30)
+
+(setf (val *v2*) 71)
+
+(cellctl::remove-ref *v1*)
+
+(cellctl::set-ref *v1* *model01*)
 |#
 
 
