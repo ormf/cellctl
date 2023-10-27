@@ -36,14 +36,14 @@
    (dependents :initform nil :accessor dependents)))
 
 (defmethod (setf val) (val (instance model-slot))
-  (funcall (set-cell-hook instance) val)
   (setf (slot-value instance 'val) val)
+  (funcall (set-cell-hook instance) val)
   (map nil #'(lambda (cell) (ref-set-cell cell val))
        (dependents instance))
   val)
 
 (defmethod print-object ((obj model-slot) out)
-  (print-unreadable-object (obj out :type t)
+  (print-unreadable-object (obj out :type nil)
     (format out "m ~s" (val obj))))
 
 (defgeneric set-cell (instance value &key src)
@@ -51,12 +51,12 @@
 ;;;    (format t "~&set-cell ~a ~a ~a ~a~%" instance value src (slot-value instance 'val))
     (let ((old (slot-value instance 'val)))
       (unless (eql old value)
-        (funcall (set-cell-hook instance) value :src src)
         (prog1
             (setf (slot-value instance 'val) value)
 ;;;          (format t "~&mapping...~%")          
           (dolist (cell (dependents instance))
-            (unless (eql cell src) (ref-set-cell cell value)))))
+            (unless (eql cell src) (ref-set-cell cell value))))
+        (funcall (set-cell-hook instance) value :src src))
       value))
   (:documentation "set the val slot of the model-slot and its
   dependents. If triggered from a dependant, its instance can be given
