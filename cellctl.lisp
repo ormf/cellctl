@@ -30,6 +30,26 @@
   (declare (ignore src))
   thing)
 
+(defclass bang-cell ()
+  ((ref :accessor ref :initarg :ref :initform nil)
+   (dependents :accessor dependents :initarg :dependents :initform nil)
+   (action-fn :accessor action-fn :initarg :action-fn :initform #'src-identity)))
+
+(defmethod initialize-instance :after ((instance bang-cell) &rest initargs)
+  (declare (ignore initargs))
+  (with-slots (ref) instance
+    (when ref (pushnew instance (dependents ref))))
+  instance)
+
+(defgeneric trigger (instance &optional src)
+  (:method ((instance bang-cell) &optional src)
+    (funcall (action-fn instance) (or src instance))
+    (dolist (obj (dependents instance)) (trigger obj (or src instance)))))
+
+(defmethod print-object ((obj bang-cell) out)
+  (print-unreadable-object (obj out :type nil)
+    (format out "bang")))
+
 (defclass model-slot ()
   ((val :initform 0 :initarg :val :accessor val)
    (set-cell-hook :initform #'src-identity :initarg :set-cell-hook :accessor set-cell-hook)
@@ -92,7 +112,6 @@
 ;;; (defparameter *test-model* (make-instance 'model-array))
 
 ;;; (setf (val *test-model*) 10)
-
 
 (defclass value-cell ()
   ((val :accessor val :initarg :val :initform 0)
@@ -210,6 +229,9 @@
      ,@(class-get-model-slot-reader-defs class-name)))
 
 ;;; (class-redefine-model-slots-setf boid-params)
+
+
+
 
 #|
 
