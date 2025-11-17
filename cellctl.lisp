@@ -95,15 +95,13 @@
   val)
 
 (defmethod set-cell ((instance model-array) value &key src)
-  (let ((old (slot-value instance 'val)))
-    (unless (eql old value)
-      (prog1
-          (setf (slot-value instance 'val) value)
-        (with-slots (arr a-ref dependents) instance
-          (setf (apply #'aref arr a-ref) value)
-          (map nil #'(lambda (cell) (unless (eql cell src)
-                                 (ref-set-cell cell value)))
-               (dependents instance)))))))
+  (prog1
+      (setf (slot-value instance 'val) value)
+    (with-slots (arr a-ref dependents) instance
+      (setf (apply #'aref arr a-ref) value)
+      (map nil #'(lambda (cell) (unless (eql cell src)
+                             (ref-set-cell cell value)))
+           (dependents instance)))))
 
 (defmethod print-object ((obj model-array) out)
   (print-unreadable-object (obj out :type nil)
@@ -126,7 +124,8 @@
       (with-slots (val ref map-fn) instance
         (pushnew instance (dependents ref))
         (setf val (funcall map-fn (val ref))))
-      (warn "no ref specified for ~a on initialization" instance))
+      ;; (warn "no ref specified for ~a on initialization" instance)
+      )
   instance)
 
 (defgeneric ref-set-cell (instance new-val)
@@ -138,15 +137,13 @@
       (if ref-set-hook (funcall ref-set-hook val)))))
 
 (defmethod (setf val) (new-val (instance value-cell))
-  (let ((old (slot-value instance 'val)))
-    (unless (eql old new-val)
-      (setf (slot-value instance 'val) new-val)
-      (if (ref-set-hook instance) (funcall (ref-set-hook instance) new-val))
+  (setf (slot-value instance 'val) new-val)
+  (if (ref-set-hook instance) (funcall (ref-set-hook instance) new-val))
 ;;;  (format t "directly setting value-cell~%")
-      (if (and (ref instance) (map-fn instance))
-          (set-cell (ref instance)
-                    (funcall (map-fn instance) new-val) :src instance))
-      new-val)))
+  (if (and (ref instance) (map-fn instance))
+      (set-cell (ref instance)
+                (funcall (map-fn instance) new-val) :src instance))
+  new-val)
 
 (defmethod print-object ((obj value-cell) out)
   (print-unreadable-object (obj out :type nil)
